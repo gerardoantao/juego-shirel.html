@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Juego de la Vida SHIREL - Tablero</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        :root {
+            --bg-casino: #060b13;
+            --neon-blue: #00e5ff;
+            --gold: #ffd700;
+            --card-bg: #111a2e;
+        }
+
+        body {
+            background-color: var(--bg-casino);
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            color: var(--gold);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+            margin-bottom: 5px;
+        }
+
+        .subtitulo {
+            color: var(--neon-blue);
+            margin-bottom: 25px;
+            font-weight: bold;
+        }
+
+        /* Contenedor del Tablero 0-99 */
+        .tablero-container {
+            display: grid;
+            grid-template-columns: repeat(10, 1fr); /* 10 columnas */
+            gap: 10px;
+            max-width: 95%;
+            width: 1000px;
+            background: rgba(255,255,255,0.02);
+            padding: 15px;
+            border-radius: 12px;
+            border: 1px solid rgba(0, 229, 255, 0.2);
+        }
+
+        /* Cada casillero */
+        .casillero {
+            background-color: var(--card-bg);
+            border: 2px solid #1f2d4a;
+            border-radius: 8px;
+            aspect-ratio: 1; /* Cuadrados perfectos */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .casillero:hover {
+            border-color: var(--neon-blue);
+            box-shadow: 0 0 12px rgba(0, 229, 255, 0.4);
+            transform: scale(1.05);
+        }
+
+        .numero {
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .juego-tag {
+            font-size: 0.65rem;
+            color: var(--gold);
+            text-transform: uppercase;
+            text-align: center;
+            margin-top: 4px;
+        }
+
+        /* Modal para las salas de apuestas */
+        .modal {
+            display: none; 
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #0d1527;
+            border: 2px solid var(--gold);
+            box-shadow: 0 0 30px rgba(255, 215, 0, 0.3);
+            padding: 25px;
+            border-radius: 15px;
+            z-index: 100;
+            width: 320px;
+        }
+
+        .modal-header {
+            font-size: 1.2rem;
+            color: var(--gold);
+            margin-bottom: 15px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .btn-apostar {
+            background: linear-gradient(45deg, #00c6ff, #0072ff);
+            color: white;
+            border: none;
+            padding: 10px;
+            width: 100%;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .btn-cerrar {
+            background: #ca3434;
+            color: white;
+            border: none;
+            padding: 6px;
+            width: 100%;
+            border-radius: 6px;
+            margin-top: 15px;
+            cursor: pointer;
+        }
+
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 99;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Juego de la Vida SHIREL</h1>
+    <p class="subtitulo">JUGADORES Y PARTICIPANTES</p>
+
+    <div class="tablero-container" id="tablero"></div>
+
+    <div class="overlay" id="overlay"></div>
+    <div class="modal" id="modalApuesta">
+        <div class="modal-header" id="modalTitulo">Casillero XX</div>
+        <p style="font-size: 0.9rem; color: #aaa;">Crear una sala de duelo para este juego:</p>
+        
+        <label>Monto a apostar:</label>
+        <input type="number" id="montoApuesta" value="1000" style="width: 90%; padding: 8px; margin: 8px 0; border-radius: 4px; border: none;">
+        
+        <label>Moneda:</label>
+        <select id="monedaApuesta" style="width: 97%; padding: 8px; margin: 8px 0; border-radius: 4px;">
+            <option value="ARS">Pesos (ARS)</option>
+            <option value="USD">Dólares (USD)</option>
+        </select>
+
+        <button class="btn-apostar" onclick="lanzarDuelo()">Lanzar Reto 🔥</button>
+        <button class="btn-cerrar" onclick="cerrarModal()">Cerrar</button>
+    </div>
+
+    <script>
+        // Nos conectamos al servidor Backend (asumiendo que corre en localhost:3000)
+        const socket = io('http://localhost:3000');
+        let casilleroSeleccionado = null;
+
+        // Lista de juegos que vamos a repartir en los casilleros de forma ilustrativa
+        const juegosDisponibles = ["Truco", "Chinchón", "Casita Robada", "Escoba de 15", "Póker"];
+
+        // Generar los 100 casilleros (0 al 99)
+        const tablero = document.getElementById('tablero');
+        for (let i = 0; i <= 99; i++) {
+            const casillero = document.createElement('div');
+            casillero.className = 'casillero';
+            
+            // Le asignamos un juego al azar para rellenar
+            const juegoDeEsteCasillero = juegosDisponibles[i % juegosDisponibles.length];
+
+            casillero.innerHTML = `
+                <div class="numero">${i}</div>
+                <div class="juego-tag">${juegoDeEsteCasillero}</div>
+            `;
+
+            // Evento al hacer click en el casillero
+            casillero.onclick = () => abrirModal(i, juegoDeEsteCasillero);
+            tablero.appendChild(casillero);
+        }
+
+        // Lógica del Modal
+        const modal = document.getElementById('modalApuesta');
+        const overlay = document.getElementById('overlay');
+        const modalTitulo = document.getElementById('modalTitulo');
+
+        function abrirModal(numero, juego) {
+            casilleroSeleccionado = numero;
+            modalTitulo.innerText = `Casillero ${numero}: ${juego}`;
+            modal.style.display = 'block';
+            overlay.style.display = 'block';
+        }
+
+        function cerrarModal() {
+            modal.style.display = 'none';
+            overlay.style.display = 'none';
+        }
+
+        // Enviar la orden de apuesta al servidor mediante Socket
+        function lanzarDuelo() {
+            const monto = parseFloat(document.getElementById('montoApuesta').value);
+            const moneda = document.getElementById('monedaApuesta').value;
+            
+            // ID temporal para pruebas (en producción vendrá del login de usuario)
+            const userId = "usr_juan"; 
+
+            if(monto <= 0 || isNaN(monto)) {
+                alert("Por favor introduce un monto válido.");
+                return;
+            }
+
+            // Enviamos el evento exacto que nuestro backend ya sabe escuchar
+            socket.emit('crearDuelo', {
+                userId: userId,
+                casilleroId: casilleroSeleccionado,
+                monto: monto,
+                moneda: moneda
+            });
+
+            cerrarModal();
+        }
+
+        // Escuchar respuestas del servidor
+        socket.on('dueloCreado Éxito', (data) => {
+            alert(`¡Reto publicado con éxito! Sala ID: ${data.salaId}. Tu saldo se ha actualizado.`);
+        });
+
+        socket.on('error', (data) => {
+            alert(`Error: ${data.mensaje}`);
+        });
+    </script>
+</body>
+</html>
